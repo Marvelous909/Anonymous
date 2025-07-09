@@ -64,7 +64,6 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         .select('id')
         .eq('user_id', user?.id)
         .single();
-
       if (company) {
         setUserCompanyId(company.id);
       }
@@ -84,9 +83,7 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
           content,
           created_at,
           resource_id,
-          from_company:from_company_id(
-            anonymous_id
-          )
+          from_company_id
         `)
         .eq('to_company_id', userCompanyId)
         .is('thread_id', null)
@@ -94,7 +91,45 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         .order('created_at', { ascending: false });
 
       if (messages) {
-        const grouped = messages.reduce((acc: Record<string, Message[]>, msg) => {
+        // Get company information for each message
+        const messagesWithCompanyInfo = await Promise.all(
+          messages.map(async (msg) => {
+            try {
+              const { data: company, error } = await supabase
+                .from('companies')
+                .select('anonymous_id')
+                .eq('id', msg.from_company_id)
+                .single();
+              
+              if (error) {
+                console.error('Error fetching company:', error);
+                return {
+                  ...msg,
+                  from_company: {
+                    anonymous_id: 'Ukjent bedrift'
+                  }
+                };
+              }
+              
+              return {
+                ...msg,
+                from_company: {
+                  anonymous_id: company?.anonymous_id || 'Ukjent bedrift'
+                }
+              };
+            } catch (error) {
+              console.error('Error fetching company info:', error);
+              return {
+                ...msg,
+                from_company: {
+                  anonymous_id: 'Ukjent bedrift'
+                }
+              };
+            }
+          })
+        );
+
+        const grouped = messagesWithCompanyInfo.reduce((acc: Record<string, Message[]>, msg) => {
           if (!acc[msg.resource_id]) {
             acc[msg.resource_id] = [];
           }
@@ -110,7 +145,6 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
 
   const loadContactInfo = async () => {
     if (!userCompanyId) return;
-
     const acceptedResources = resources.filter(r => r.is_taken);
     
     for (const resource of acceptedResources) {
@@ -128,27 +162,38 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
           // Check if contact info is shared
           const { data: sharing } = await supabase
             .from('thread_contact_sharing')
-            .select(`
-              from_company:from_company_id(
-                real_contact_info
-              ),
-              to_company:to_company_id(
-                real_contact_info
-              )
-            `)
+            .select('from_company_id, to_company_id')
             .eq('thread_id', messages.id)
             .single();
 
           if (sharing) {
-            const otherCompany = sharing.from_company.id === userCompanyId 
-              ? sharing.to_company 
-              : sharing.from_company;
+            // Get the other company's ID
+            const otherCompanyId = sharing.from_company_id === userCompanyId 
+              ? sharing.to_company_id 
+              : sharing.from_company_id;
 
-            if (otherCompany?.real_contact_info) {
-              setContactInfo(prev => ({
-                ...prev,
-                [resource.id]: otherCompany.real_contact_info
-              }));
+            // Get the other company's contact info
+            try {
+              const { data: company, error } = await supabase
+                .from('companies')
+                .select('real_contact_info')
+                .eq('id', otherCompanyId)
+                .single();
+
+              if (error) {
+                console.error('Error fetching company contact info:', error);
+                continue;
+              }
+
+              if (company?.real_contact_info) {
+                setContactInfo(prev => ({
+                  ...prev,
+                  [resource.id]: company.real_contact_info
+                }));
+              }
+            } catch (error) {
+              console.error('Error fetching company contact info:', error);
+              continue;
             }
           }
         }

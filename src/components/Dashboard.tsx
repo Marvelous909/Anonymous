@@ -3,7 +3,7 @@ import { ResourceTable } from './ResourceTable';
 import { AddResourceForm } from './AddResourceForm';
 import { Inbox } from './Inbox';
 import { RegisterCompany } from './RegisterCompany';
-import { supabase } from '../lib/supabase';
+import { supabase, getCompanyForUser } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import type { Resource } from '../types';
 
@@ -51,15 +51,15 @@ export const Dashboard: React.FC = () => {
   }, [user]);
 
   const loadUserCompany = async () => {
+    if (!user?.id) {
+      setHasCompany(false);
+      setUserCompanyId(null);
+      return;
+    }
+
     try {
       setLoading(true);
-      const { data: company, error } = await supabase
-        .from('companies')
-        .select('id')
-        .eq('user_id', user?.id)
-        .single();
-
-      if (error) throw error;
+      const company = await getCompanyForUser(user.id);
 
       if (!company) {
         setHasCompany(false);
